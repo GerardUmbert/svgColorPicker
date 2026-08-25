@@ -189,6 +189,23 @@ main {
   color: var(--text-dim);
   font-size: 11px;
 }
+.color-list-item .layer-download {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  line-height: 18px;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+.color-list-item .layer-download:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
 
 .current-color-box {
   display: flex;

@@ -328,17 +328,75 @@ createApp({
 
     // ---------- Export ----------
 
-    function downloadSvg() {
-      if (!svgRootB) return;
+    function serializeCleanSvg(svgEl) {
       const serializer = new XMLSerializer();
-      let markup = serializer.serializeToString(svgRootB);
-      markup = markup.replace(/\sdata-paintable="1"/g, '').replace(/\sclass="fill-target-highlight"/g, '');
-      const blob = new Blob([markup], { type: 'image/svg+xml' });
+      let markup = serializer.serializeToString(svgEl);
+      markup = markup
+        .replace(/\sdata-paintable="1"/g, '')
+        .replace(/\sclass="fill-target-highlight"/g, '')
+        .replace(/\sclass=""/g, '');
+      return markup;
+    }
+
+    function triggerDownload(content, filename, mime) {
+      const blob = new Blob([content], { type: mime || 'image/svg+xml' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const base = fileName.value.replace(/\.svg$/i, '') || 'image';
-      a.download = base + '-recolored.svg';
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function baseName() {
+      return fileName.value.replace(/\.svg$/i, '') || 'image';
+    }
+
+    function sanitizeForFilename(str) {
+      return str.replace(/[^a-z0-9_-]/gi, '') || 'color';
+    }
+
+    function downloadSvg() {
+      if (!svgRootB) return;
+      const markup = serializeCleanSvg(svgRootB);
+      triggerDownload(markup, baseName() + '-recolored.svg');
+    }
+
+    // Builds a version of the current SVG containing only the shapes matching
+    // `color`; every other paintable shape is hidden via display:none so the
+    // document structure (defs, viewBox, gradients) stays intact even when
+    // shapes overlap in the original artwork.
+    function buildLayerSvg(color) {
+      if (!svgRootB) return null;
+      const clone = svgRootB.cloneNode(true);
+      getPaintableElements(clone).forEach(el => {
+        const fill = normalizeColor(el.getAttribute('fill') || el.style.fill);
+        if (fill !== color) {
+          el.style.display = 'none';
+        }
+      });
+      return serializeCleanSvg(clone);
+    }
+
+    function downloadLayer(color) {
+      const markup = buildLayerSvg(color);
+      if (!markup) return;
+      triggerDownload(markup, baseName() + '-layer-' + sanitizeForFilename(color) + '.svg');
+    }
+
+    function downloadAllLayersZip() {
+      if (!svgRootB || !detectedColors.value.length) return;
+      const files = detectedColors.value.map(item => ({
+        name: baseName() + '-layer-' + sanitizeForFilename(item.color) + '.svg',
+        content: buildLayerSvg(item.color),
+      }));
+      const zipBlob = createZip(files);
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = baseName() + '-layers.zip';
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -357,6 +415,7 @@ createApp({
       onCurrentColorTextInput,
       toggleDetectedColor, clearDetectedSelection, recolorSelected,
       undo, redo, resetToOriginal, downloadSvg,
+      downloadLayer, downloadAllLayersZip,
       colorToHex,
     };
   }

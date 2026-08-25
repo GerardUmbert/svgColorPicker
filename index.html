@@ -62,9 +62,11 @@
             <span class="swatch-sm" :style="{background: item.color}"></span>
             <span>{{ item.color }}</span>
             <span class="count">{{ item.count }}</span>
+            <button class="layer-download" title="Download this layer as its own SVG"
+                    @click.stop="downloadLayer(item.color)">&darr;</button>
           </div>
         </div>
-        <p class="hint">Ctrl/Cmd/Shift+click to select multiple colors, then replace them all at once.</p>
+        <p class="hint">Ctrl/Cmd/Shift+click to select multiple colors, then replace them all at once. Each layer = one color's shapes; the &darr; button exports just that layer (other shapes hidden, so overlaps aren't a problem).</p>
         <div style="display:flex; gap:8px; margin-top:10px;">
           <button class="btn" style="flex:1;"
                   :disabled="!selectedDetectedColors.length"
@@ -73,6 +75,9 @@
           </button>
           <button class="btn" v-if="selectedDetectedColors.length" @click="clearDetectedSelection">Clear</button>
         </div>
+        <button class="btn" style="width:100%; margin-top:8px;" @click="downloadAllLayersZip">
+          Download all layers (.zip)
+        </button>
       </div>
     </aside>
 
@@ -105,6 +110,7 @@
 </div>
 
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="zip.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

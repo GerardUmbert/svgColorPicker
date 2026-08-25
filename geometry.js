@@ -391,9 +391,48 @@ function bboxOverlap(a, b) {
   return !(a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY);
 }
 
+// Shoelace formula on the outer ring only (rings[0]) - a fast, good-enough
+// area estimate; ignoring holes slightly overstates area for donut-shaped
+// paths, which only makes downstream filtering more conservative (less
+// likely to wrongly drop a real detail).
+function ringArea(ring) {
+  let sum = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % ring.length];
+    sum += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(sum) / 2;
+}
+
+function ringPerimeter(ring) {
+  let p = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % ring.length];
+    p += Math.hypot(x2 - x1, y2 - y1);
+  }
+  return p;
+}
+
+// area alone can't tell a thin elongated sliver apart from a small chunky
+// detail (both can have similarly small area), and bounding-box aspect
+// ratio is fooled by diagonal slivers. Effective width (2*area/perimeter)
+// approximates a shape's average thickness regardless of its orientation or
+// length: a hairline sliver has a small effective width no matter how long
+// it is, while a small dot's effective width stays close to its actual size.
+function shapeEffectiveWidth(rings) {
+  if (!rings.length) return 0;
+  const ring = rings[0];
+  const area = ringArea(ring);
+  const per = ringPerimeter(ring);
+  return per > 0 ? (2 * area) / per : 0;
+}
+
 window.SvgGeometry = {
   shapeToRings,
   ringsBBox,
   bboxOverlap,
+  shapeEffectiveWidth,
   FLATTEN_TOLERANCE,
 };

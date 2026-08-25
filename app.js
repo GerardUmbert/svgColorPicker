@@ -269,17 +269,39 @@ createApp({
 
     // ---------- Color detection / recolor-all ----------
 
+    // Shapes whose effective width (2*area/perimeter - approximates average
+    // thickness regardless of orientation or length) falls below this
+    // fraction of the canvas's smaller dimension are treated as hairline
+    // slivers/stray outline fragments rather than meaningful detail:
+    // excluded from the "Colors in SVG" counts and from layer export (both
+    // as a layer's own silhouette and as a potential cutter for other
+    // layers). Area alone can't tell a thin elongated sliver apart from a
+    // small chunky detail (both can have similarly small area), which is
+    // why this uses effective width instead. Filtered shapes remain fully
+    // clickable/paintable on the canvas - this only affects aggregation and
+    // export.
+    const MIN_EFFECTIVE_WIDTH_FRACTION = 0.0025;
+
+    function minEffectiveWidth() {
+      const canvas = getCanvasViewBox();
+      return canvas ? Math.min(canvas.w, canvas.h) * MIN_EFFECTIVE_WIDTH_FRACTION : 0;
+    }
+
     function scanColors() {
       if (!svgRootB) { detectedColors.value = []; return; }
+      const threshold = minEffectiveWidth();
       const counts = new Map();
       const topmostIndex = new Map(); // color -> highest (last) z-order index seen
       const els = getPaintableElements(svgRootB);
       els.forEach((el, i) => {
         const fill = normalizeColor(el.getAttribute('fill') || getComputedStyle(el).fill);
-        if (fill && fill !== 'none') {
-          counts.set(fill, (counts.get(fill) || 0) + 1);
-          topmostIndex.set(fill, i); // document order == stacking order, later wins
+        if (!fill || fill === 'none') return;
+        if (threshold > 0) {
+          const rings = SvgGeometry.shapeToRings(el, svgRootB, SvgGeometry.FLATTEN_TOLERANCE);
+          if (rings.length && SvgGeometry.shapeEffectiveWidth(rings) < threshold) return;
         }
+        counts.set(fill, (counts.get(fill) || 0) + 1);
+        topmostIndex.set(fill, i); // document order == stacking order, later wins
       });
       detectedColors.value = Array.from(counts.entries())
         .map(([color, count]) => ({ color, count }))
@@ -559,12 +581,14 @@ createApp({
 
     function buildSubtractionRequests(colors) {
       if (!svgRootB) return [];
+      const threshold = minEffectiveWidth();
       const els = getPaintableElements(svgRootB);
       const shapeInfo = els.map((el, i) => {
         if (el.tagName.toLowerCase() === 'g') return null;
         const fill = normalizeColor(el.getAttribute('fill') || el.style.fill);
         const rings = SvgGeometry.shapeToRings(el, svgRootB, SvgGeometry.FLATTEN_TOLERANCE);
         if (!rings.length) return null;
+        if (threshold > 0 && SvgGeometry.shapeEffectiveWidth(rings) < threshold) return null;
         return { index: i, fill, rings, bbox: SvgGeometry.ringsBBox(rings) };
       });
 

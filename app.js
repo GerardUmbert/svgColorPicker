@@ -339,6 +339,23 @@ createApp({
       });
     }
 
+    // Hovering a color in the "Colors in SVG" list flashes every matching
+    // shape in both preview panes with a neon-green outline, so it's easy to
+    // spot where that color actually is in the artwork.
+    function hoverDetectedColor(color) {
+      [svgHostA.value, svgHostB.value].forEach(host => {
+        if (!host) return;
+        const svgEl = host.querySelector('svg');
+        if (!svgEl) return;
+        svgEl.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
+        if (!color) return;
+        getPaintableElements(svgEl).forEach(el => {
+          const fill = normalizeColor(el.getAttribute('fill') || getComputedStyle(el).fill);
+          if (fill === color) el.classList.add('hover-highlight');
+        });
+      });
+    }
+
     function recolorSelected(newColor) {
       if (!svgRootB || !selectedDetectedColors.value.length) return;
       const targets = selectedDetectedColors.value;
@@ -738,7 +755,7 @@ createApp({
       onFileInputChange, onDrop, onDragOver, onDragLeave,
       selectPaletteColor, addColorToPalette, removeColorFromPalette,
       onCurrentColorTextInput,
-      toggleDetectedColor, clearDetectedSelection, recolorSelected,
+      toggleDetectedColor, clearDetectedSelection, recolorSelected, hoverDetectedColor,
       undo, redo, resetToOriginal, downloadSvg,
       downloadLayer, downloadAllLayersZip, isExporting, exportLabel, exportProgress, cancelExport,
       colorToHex,

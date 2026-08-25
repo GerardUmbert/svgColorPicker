@@ -58,7 +58,9 @@
           <div v-for="item in detectedColors" :key="item.color"
                class="color-list-item"
                :class="{selected: selectedDetectedColors.includes(item.color)}"
-               @click="toggleDetectedColor(item.color, $event)">
+               @click="toggleDetectedColor(item.color, $event)"
+               @mouseenter="hoverDetectedColor(item.color)"
+               @mouseleave="hoverDetectedColor(null)">
             <span class="layer-num" :title="'Layer ' + item.layer + ' (1 = topmost)'">{{ item.layer }}</span>
             <span class="swatch-sm" :style="{background: item.color}"></span>
             <span>{{ item.color }}</span>

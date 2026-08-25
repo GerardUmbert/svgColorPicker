@@ -310,7 +310,6 @@ main.no-sidebar {
   max-width: 90%;
   max-height: 90%;
   transform-origin: center center;
-  will-change: transform;
 }
 .svg-pane .svg-host svg {
   max-width: 100%;

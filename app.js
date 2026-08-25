@@ -54,69 +54,66 @@ createApp({
     const detectedColors = ref([]); // [{color, count}]
     const selectedDetectedColors = ref([]); // array, supports multi-select
 
-    const view = reactive({
-      a: { zoom: 1, panX: 0, panY: 0 },
-      b: { zoom: 1, panX: 0, panY: 0 },
-    });
+    // One shared zoom/pan state for both preview panes, so the original and
+    // editing views always show the same region at the same scale - there's
+    // nothing to keep in sync since they read the same reactive object.
+    const view = reactive({ zoom: 1, panX: 0, panY: 0 });
     const ZOOM_MIN = 0.2;
     const ZOOM_MAX = 8;
     const ZOOM_STEP = 0.0015;
 
-    function paneTransform(which) {
-      const v = view[which];
-      return `translate(${v.panX}px, ${v.panY}px) scale(${v.zoom})`;
+    function paneTransform() {
+      return `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`;
     }
 
-    function onWheelZoom(e, which) {
+    function onWheelZoom(e) {
       if (!hasSvg.value) return;
       e.preventDefault();
-      const v = view[which];
       const rect = e.currentTarget.getBoundingClientRect();
       const cx = e.clientX - rect.left - rect.width / 2;
       const cy = e.clientY - rect.top - rect.height / 2;
-      const oldZoom = v.zoom;
+      const oldZoom = view.zoom;
       const factor = Math.exp(-e.deltaY * ZOOM_STEP);
       const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, oldZoom * factor));
       if (newZoom === oldZoom) return;
       // keep the point under the cursor fixed while zooming
-      v.panX = cx - (cx - v.panX) * (newZoom / oldZoom);
-      v.panY = cy - (cy - v.panY) * (newZoom / oldZoom);
-      v.zoom = newZoom;
+      view.panX = cx - (cx - view.panX) * (newZoom / oldZoom);
+      view.panY = cy - (cy - view.panY) * (newZoom / oldZoom);
+      view.zoom = newZoom;
     }
 
-    function resetZoom(which) {
-      view[which].zoom = 1;
-      view[which].panX = 0;
-      view[which].panY = 0;
+    function resetZoom() {
+      view.zoom = 1;
+      view.panX = 0;
+      view.panY = 0;
     }
 
-    const dragState = { which: null, startX: 0, startY: 0, startPanX: 0, startPanY: 0, dragged: false };
+    const dragState = { active: false, startX: 0, startY: 0, startPanX: 0, startPanY: 0, dragged: false };
 
-    function onPaneMouseDown(e, which) {
+    function onPaneMouseDown(e) {
       if (!hasSvg.value || e.button !== 0) return;
-      dragState.which = which;
+      dragState.active = true;
       dragState.startX = e.clientX;
       dragState.startY = e.clientY;
-      dragState.startPanX = view[which].panX;
-      dragState.startPanY = view[which].panY;
+      dragState.startPanX = view.panX;
+      dragState.startPanY = view.panY;
       dragState.dragged = false;
       window.addEventListener('mousemove', onPaneMouseMove);
       window.addEventListener('mouseup', onPaneMouseUp);
     }
 
     function onPaneMouseMove(e) {
-      if (!dragState.which) return;
+      if (!dragState.active) return;
       const dx = e.clientX - dragState.startX;
       const dy = e.clientY - dragState.startY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragState.dragged = true;
       if (!dragState.dragged) return;
-      const v = view[dragState.which];
-      v.panX = dragState.startPanX + dx;
-      v.panY = dragState.startPanY + dy;
+      view.panX = dragState.startPanX + dx;
+      view.panY = dragState.startPanY + dy;
     }
 
     function onPaneMouseUp() {
-      dragState.which = null;
+      dragState.active = false;
       window.removeEventListener('mousemove', onPaneMouseMove);
       window.removeEventListener('mouseup', onPaneMouseUp);
     }
@@ -161,8 +158,7 @@ createApp({
       fileName.value = name || 'image.svg';
       history.stack = [markup];
       history.index = 0;
-      resetZoom('a');
-      resetZoom('b');
+      resetZoom();
       selectedDetectedColors.value = [];
       nextTick(() => {
         renderInto(svgHostA.value, markup, false);
@@ -191,35 +187,13 @@ createApp({
 
     let svgRootB = null; // the live <svg> element user paints on
 
-    // Sets explicit width/height attributes far larger than the SVG's
-    // displayed CSS size (which stays 100%/auto), so the browser rasterizes
-    // the vector content at high resolution up front instead of at its
-    // on-screen size. CSS then scales that high-res raster back down to
-    // display size (a downscale, which stays sharp), and the pan/zoom
-    // transform multiplies on top of that. Without this, zooming in with a
-    // CSS transform just stretches a low-resolution bitmap and blurs.
-    const RENDER_SCALE = 8; // should cover up to ZOOM_MAX without blurring
-
     function renderInto(hostEl, markup, interactive) {
       if (!hostEl) return;
       hostEl.innerHTML = markup;
       const svgEl = hostEl.querySelector('svg');
       if (!svgEl) return;
-      const viewBox = svgEl.getAttribute('viewBox');
-      let baseW = parseFloat(svgEl.getAttribute('width'));
-      let baseH = parseFloat(svgEl.getAttribute('height'));
-      if ((!baseW || !baseH) && viewBox) {
-        const parts = viewBox.trim().split(/[\s,]+/).map(Number);
-        baseW = parts[2];
-        baseH = parts[3];
-      }
-      if (baseW && baseH) {
-        svgEl.setAttribute('width', baseW * RENDER_SCALE);
-        svgEl.setAttribute('height', baseH * RENDER_SCALE);
-      } else {
-        svgEl.removeAttribute('width');
-        svgEl.removeAttribute('height');
-      }
+      svgEl.removeAttribute('width');
+      svgEl.removeAttribute('height');
       svgEl.style.width = '100%';
       svgEl.style.height = 'auto';
 

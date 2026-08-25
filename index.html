@@ -97,17 +97,17 @@
       <div v-if="hasSvg" class="svg-views" :class="compareMode ? 'compare' : 'single'">
         <div class="svg-pane" v-if="compareMode"
              :class="{'bg-white': !transparentBackground}"
-             @wheel="onWheelZoom($event, 'a')" @dblclick="resetZoom('a')"
-             @mousedown="onPaneMouseDown($event, 'a')">
-          <span class="label">Original &middot; {{ Math.round(view.a.zoom * 100) }}%</span>
-          <div class="svg-host" ref="svgHostA" :style="{transform: paneTransform('a')}"></div>
+             @wheel="onWheelZoom($event)" @dblclick="resetZoom()"
+             @mousedown="onPaneMouseDown($event)">
+          <span class="label">Original &middot; {{ Math.round(view.zoom * 100) }}%</span>
+          <div class="svg-host" ref="svgHostA" :style="{transform: paneTransform()}"></div>
         </div>
         <div class="svg-pane"
              :class="{'bg-white': !transparentBackground}"
-             @wheel="onWheelZoom($event, 'b')" @dblclick="resetZoom('b')"
-             @mousedown="onPaneMouseDown($event, 'b')">
-          <span class="label">{{ compareMode ? 'Editing' : fileName }} &middot; {{ Math.round(view.b.zoom * 100) }}%</span>
-          <div class="svg-host" ref="svgHostB" :style="{transform: paneTransform('b')}"></div>
+             @wheel="onWheelZoom($event)" @dblclick="resetZoom()"
+             @mousedown="onPaneMouseDown($event)">
+          <span class="label">{{ compareMode ? 'Editing' : fileName }} &middot; {{ Math.round(view.zoom * 100) }}%</span>
+          <div class="svg-host" ref="svgHostB" :style="{transform: paneTransform()}"></div>
         </div>
       </div>
 

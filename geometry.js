@@ -423,6 +423,22 @@ function bbox(poly) {
   return { minX, minY, maxX, maxY };
 }
 
+function unionBBox(polygons) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  polygons.forEach(poly => {
+    const b = bbox(poly);
+    if (b.minX < minX) minX = b.minX;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxY > maxY) maxY = b.maxY;
+  });
+  return { minX, minY, maxX, maxY };
+}
+
+function bboxOverlap(a, b) {
+  return !(a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY);
+}
+
 // ---------- Greiner-Hormann clipping (difference: subject - clip) ----------
 // Reference algorithm: Greiner & Hormann 1998, "Efficient clipping of
 // arbitrary polygon". Handles simple (non-self-intersecting) polygons.
@@ -623,5 +639,7 @@ window.SvgGeometry = {
   shapeToPolygons,
   subtractAll,
   polygonsToPathD,
+  unionBBox,
+  bboxOverlap,
   FLATTEN_TOLERANCE,
 };

@@ -63,9 +63,12 @@ header h1 {
 main {
   flex: 1;
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: minmax(0, 280px) 1fr;
   gap: 0;
   min-height: 0;
+}
+main.no-sidebar {
+  grid-template-columns: 1fr;
 }
 
 .sidebar {
@@ -281,8 +284,13 @@ main {
   align-items: center;
   justify-content: center;
   position: relative;
-  overflow: auto;
+  overflow: hidden;
   min-height: 0;
+  cursor: grab;
+  user-select: none;
+}
+.svg-pane:active {
+  cursor: grabbing;
 }
 .svg-pane .label {
   position: absolute;
@@ -298,8 +306,8 @@ main {
 .svg-pane .svg-host {
   max-width: 90%;
   max-height: 90%;
-  transition: transform 0.03s linear;
   transform-origin: center center;
+  will-change: transform;
 }
 .svg-pane .svg-host svg {
   max-width: 100%;
@@ -331,6 +339,7 @@ main {
   border: 2px dashed var(--border);
   border-radius: 12px;
   padding: 40px 60px;
+  max-width: 420px;
   transition: border-color 0.15s, background 0.15s;
 }
 .empty-state .dropzone.dragover {
@@ -350,3 +359,37 @@ kbd {
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+.export-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.export-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 28px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 14px;
+  color: var(--text);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+}
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

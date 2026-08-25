@@ -53,23 +53,71 @@ createApp({
     const detectedColors = ref([]); // [{color, count}]
     const selectedDetectedColors = ref([]); // array, supports multi-select
 
-    const zoomA = ref(1);
-    const zoomB = ref(1);
+    const view = reactive({
+      a: { zoom: 1, panX: 0, panY: 0 },
+      b: { zoom: 1, panX: 0, panY: 0 },
+    });
     const ZOOM_MIN = 0.2;
     const ZOOM_MAX = 8;
     const ZOOM_STEP = 0.0015;
 
+    function paneTransform(which) {
+      const v = view[which];
+      return `translate(${v.panX}px, ${v.panY}px) scale(${v.zoom})`;
+    }
+
     function onWheelZoom(e, which) {
       if (!hasSvg.value) return;
       e.preventDefault();
-      const target = which === 'a' ? zoomA : zoomB;
+      const v = view[which];
+      const rect = e.currentTarget.getBoundingClientRect();
+      const cx = e.clientX - rect.left - rect.width / 2;
+      const cy = e.clientY - rect.top - rect.height / 2;
+      const oldZoom = v.zoom;
       const factor = Math.exp(-e.deltaY * ZOOM_STEP);
-      target.value = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, target.value * factor));
+      const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, oldZoom * factor));
+      if (newZoom === oldZoom) return;
+      // keep the point under the cursor fixed while zooming
+      v.panX = cx - (cx - v.panX) * (newZoom / oldZoom);
+      v.panY = cy - (cy - v.panY) * (newZoom / oldZoom);
+      v.zoom = newZoom;
     }
 
     function resetZoom(which) {
-      if (which === 'a') zoomA.value = 1;
-      else zoomB.value = 1;
+      view[which].zoom = 1;
+      view[which].panX = 0;
+      view[which].panY = 0;
+    }
+
+    const dragState = { which: null, startX: 0, startY: 0, startPanX: 0, startPanY: 0, dragged: false };
+
+    function onPaneMouseDown(e, which) {
+      if (!hasSvg.value || e.button !== 0) return;
+      dragState.which = which;
+      dragState.startX = e.clientX;
+      dragState.startY = e.clientY;
+      dragState.startPanX = view[which].panX;
+      dragState.startPanY = view[which].panY;
+      dragState.dragged = false;
+      window.addEventListener('mousemove', onPaneMouseMove);
+      window.addEventListener('mouseup', onPaneMouseUp);
+    }
+
+    function onPaneMouseMove(e) {
+      if (!dragState.which) return;
+      const dx = e.clientX - dragState.startX;
+      const dy = e.clientY - dragState.startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragState.dragged = true;
+      if (!dragState.dragged) return;
+      const v = view[dragState.which];
+      v.panX = dragState.startPanX + dx;
+      v.panY = dragState.startPanY + dy;
+    }
+
+    function onPaneMouseUp() {
+      dragState.which = null;
+      window.removeEventListener('mousemove', onPaneMouseMove);
+      window.removeEventListener('mouseup', onPaneMouseUp);
     }
 
     const history = reactive({ stack: [], index: -1 }); // undo/redo of full SVG markup snapshots
@@ -112,8 +160,8 @@ createApp({
       fileName.value = name || 'image.svg';
       history.stack = [markup];
       history.index = 0;
-      zoomA.value = 1;
-      zoomB.value = 1;
+      resetZoom('a');
+      resetZoom('b');
       selectedDetectedColors.value = [];
       nextTick(() => {
         renderInto(svgHostA.value, markup, false);
@@ -172,6 +220,7 @@ createApp({
     }
 
     function onSvgClick(e) {
+      if (dragState.dragged) return; // ignore click that ends a pan drag
       const target = e.target.closest('[data-paintable]');
       if (!target) return;
       e.stopPropagation();
@@ -375,32 +424,36 @@ createApp({
     function buildLayerSvg(color) {
       if (!svgRootB) return null;
       const els = getPaintableElements(svgRootB);
-      const ownIndex = [];
-      const aboveIndex = [];
-      els.forEach((el, i) => {
+      const shapeInfo = els.map((el, i) => {
         const tag = el.tagName.toLowerCase();
-        if (tag === 'g') return;
+        if (tag === 'g') return null;
         const fill = normalizeColor(el.getAttribute('fill') || el.style.fill);
-        if (fill === color) ownIndex.push(i);
-      });
-      if (!ownIndex.length) return null;
-      const highestOwnIndex = Math.max(...ownIndex);
-
-      let ownPolys = [];
-      ownIndex.forEach(i => {
-        ownPolys = ownPolys.concat(SvgGeometry.shapeToPolygons(els[i], svgRootB, SvgGeometry.FLATTEN_TOLERANCE));
-      });
-
-      const cutterPolys = [];
-      els.forEach((el, i) => {
-        if (i <= highestOwnIndex) return; // only shapes stacked above matter
-        const tag = el.tagName.toLowerCase();
-        if (tag === 'g') return;
         const polys = SvgGeometry.shapeToPolygons(el, svgRootB, SvgGeometry.FLATTEN_TOLERANCE);
-        polys.forEach(p => cutterPolys.push(p));
+        if (!polys.length) return null;
+        return { index: i, fill, polys, bbox: SvgGeometry.unionBBox(polys) };
       });
 
-      const resultPolys = cutterPolys.length ? SvgGeometry.subtractAll(ownPolys, cutterPolys) : ownPolys;
+      const ownShapes = shapeInfo.filter(s => s && s.fill === color);
+      if (!ownShapes.length) return null;
+
+      // For each of this color's own shapes, only the shapes stacked above
+      // THAT specific shape (by document/z-order) and whose bounding box
+      // actually overlaps it can cut into it. This avoids treating unrelated
+      // shapes elsewhere in the document as cutters just because some other
+      // occurrence of the same color happens to sit lower in the stack.
+      let resultPolys = [];
+      ownShapes.forEach(own => {
+        const cutters = [];
+        for (let j = 0; j < shapeInfo.length; j++) {
+          const other = shapeInfo[j];
+          if (!other || other.index <= own.index) continue;
+          if (!SvgGeometry.bboxOverlap(own.bbox, other.bbox)) continue;
+          other.polys.forEach(p => cutters.push(p));
+        }
+        const cut = cutters.length ? SvgGeometry.subtractAll(own.polys, cutters) : own.polys;
+        resultPolys = resultPolys.concat(cut);
+      });
+
       if (!resultPolys.length) return null; // fully covered, nothing visible
 
       const pathD = SvgGeometry.polygonsToPathD(resultPolys);
@@ -426,30 +479,54 @@ createApp({
       return baseName() + '-layer' + item.layer + '-' + sanitizeForFilename(item.color) + '.svg';
     }
 
+    const isExporting = ref(false);
+    const exportLabel = ref('');
+
+    // Runs `work` after the UI has had a chance to paint the loading state,
+    // since the geometry computation below is synchronous and can briefly
+    // block the main thread on complex artwork.
+    function runWithExportFeedback(label, work) {
+      isExporting.value = true;
+      exportLabel.value = label;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            work();
+          } finally {
+            isExporting.value = false;
+          }
+        });
+      });
+    }
+
     function downloadLayer(item) {
-      const markup = buildLayerSvg(item.color);
-      if (!markup) {
-        alert('This color is fully covered by shapes above it, so it has no visible area to export.');
-        return;
-      }
-      triggerDownload(markup, layerFileName(item));
+      runWithExportFeedback('Building layer...', () => {
+        const markup = buildLayerSvg(item.color);
+        if (!markup) {
+          alert('This color is fully covered by shapes above it, so it has no visible area to export.');
+          return;
+        }
+        triggerDownload(markup, layerFileName(item));
+      });
     }
 
     function downloadAllLayersZip() {
       if (!svgRootB || !detectedColors.value.length) return;
-      const files = detectedColors.value
-        .map(item => ({ name: layerFileName(item), content: buildLayerSvg(item.color) }))
-        .filter(f => f.content);
-      if (!files.length) return;
-      const zipBlob = createZip(files);
-      const url = URL.createObjectURL(zipBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = baseName() + '-layers.zip';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      runWithExportFeedback('Building layers and zipping...', () => {
+        const files = detectedColors.value
+          .map(item => ({ name: layerFileName(item), content: buildLayerSvg(item.color) }))
+          .filter(f => f.content);
+        if (!files.length) return;
+        const zipBlob = createZip(files);
+        const url = URL.createObjectURL(zipBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = baseName() + '-layers.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      });
     }
 
     return {
@@ -458,13 +535,13 @@ createApp({
       palette, selectedPaletteIndex, currentColor, newColorHex,
       detectedColors, selectedDetectedColors,
       canUndo, canRedo,
-      zoomA, zoomB, onWheelZoom, resetZoom,
+      view, paneTransform, onWheelZoom, resetZoom, onPaneMouseDown,
       onFileInputChange, onDrop, onDragOver, onDragLeave,
       selectPaletteColor, addColorToPalette, removeColorFromPalette,
       onCurrentColorTextInput,
       toggleDetectedColor, clearDetectedSelection, recolorSelected,
       undo, redo, resetToOriginal, downloadSvg,
-      downloadLayer, downloadAllLayersZip,
+      downloadLayer, downloadAllLayersZip, isExporting, exportLabel,
       colorToHex,
     };
   }

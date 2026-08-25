@@ -226,16 +226,19 @@ createApp({
     function scanColors() {
       if (!svgRootB) { detectedColors.value = []; return; }
       const counts = new Map();
+      const topmostIndex = new Map(); // color -> highest (last) z-order index seen
       const els = getPaintableElements(svgRootB);
-      els.forEach(el => {
+      els.forEach((el, i) => {
         const fill = normalizeColor(el.getAttribute('fill') || getComputedStyle(el).fill);
         if (fill && fill !== 'none') {
           counts.set(fill, (counts.get(fill) || 0) + 1);
+          topmostIndex.set(fill, i); // document order == stacking order, later wins
         }
       });
       detectedColors.value = Array.from(counts.entries())
         .map(([color, count]) => ({ color, count }))
-        .sort((a, b) => b.count - a.count);
+        .sort((a, b) => topmostIndex.get(b.color) - topmostIndex.get(a.color))
+        .map((item, i) => ({ ...item, layer: i + 1 }));
     }
 
     function toggleDetectedColor(color, e) {
@@ -364,34 +367,80 @@ createApp({
       triggerDownload(markup, baseName() + '-recolored.svg');
     }
 
-    // Builds a version of the current SVG containing only the shapes matching
-    // `color`; every other paintable shape is hidden via display:none so the
-    // document structure (defs, viewBox, gradients) stays intact even when
-    // shapes overlap in the original artwork.
+    // Builds a version of the current SVG containing only the true visible
+    // silhouette of shapes matching `color`: every shape stacked above it
+    // (regardless of color) is boolean-subtracted from it first, so stacking
+    // all exported layers back together (1 = topmost) exactly reconstructs
+    // the original artwork with no overlap ambiguity.
     function buildLayerSvg(color) {
       if (!svgRootB) return null;
-      const clone = svgRootB.cloneNode(true);
-      getPaintableElements(clone).forEach(el => {
+      const els = getPaintableElements(svgRootB);
+      const ownIndex = [];
+      const aboveIndex = [];
+      els.forEach((el, i) => {
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'g') return;
         const fill = normalizeColor(el.getAttribute('fill') || el.style.fill);
-        if (fill !== color) {
-          el.style.display = 'none';
-        }
+        if (fill === color) ownIndex.push(i);
       });
-      return serializeCleanSvg(clone);
+      if (!ownIndex.length) return null;
+      const highestOwnIndex = Math.max(...ownIndex);
+
+      let ownPolys = [];
+      ownIndex.forEach(i => {
+        ownPolys = ownPolys.concat(SvgGeometry.shapeToPolygons(els[i], svgRootB, SvgGeometry.FLATTEN_TOLERANCE));
+      });
+
+      const cutterPolys = [];
+      els.forEach((el, i) => {
+        if (i <= highestOwnIndex) return; // only shapes stacked above matter
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'g') return;
+        const polys = SvgGeometry.shapeToPolygons(el, svgRootB, SvgGeometry.FLATTEN_TOLERANCE);
+        polys.forEach(p => cutterPolys.push(p));
+      });
+
+      const resultPolys = cutterPolys.length ? SvgGeometry.subtractAll(ownPolys, cutterPolys) : ownPolys;
+      if (!resultPolys.length) return null; // fully covered, nothing visible
+
+      const pathD = SvgGeometry.polygonsToPathD(resultPolys);
+      const viewBox = svgRootB.getAttribute('viewBox');
+      const ns = 'http://www.w3.org/2000/svg';
+      const outSvg = document.createElementNS(ns, 'svg');
+      outSvg.setAttribute('xmlns', ns);
+      if (viewBox) outSvg.setAttribute('viewBox', viewBox);
+      else {
+        const w = svgRootB.getAttribute('width');
+        const h = svgRootB.getAttribute('height');
+        if (w && h) outSvg.setAttribute('viewBox', `0 0 ${parseFloat(w)} ${parseFloat(h)}`);
+      }
+      const pathEl = document.createElementNS(ns, 'path');
+      pathEl.setAttribute('d', pathD);
+      pathEl.setAttribute('fill', color);
+      pathEl.setAttribute('fill-rule', 'evenodd');
+      outSvg.appendChild(pathEl);
+      return serializeCleanSvg(outSvg);
     }
 
-    function downloadLayer(color) {
-      const markup = buildLayerSvg(color);
-      if (!markup) return;
-      triggerDownload(markup, baseName() + '-layer-' + sanitizeForFilename(color) + '.svg');
+    function layerFileName(item) {
+      return baseName() + '-layer' + item.layer + '-' + sanitizeForFilename(item.color) + '.svg';
+    }
+
+    function downloadLayer(item) {
+      const markup = buildLayerSvg(item.color);
+      if (!markup) {
+        alert('This color is fully covered by shapes above it, so it has no visible area to export.');
+        return;
+      }
+      triggerDownload(markup, layerFileName(item));
     }
 
     function downloadAllLayersZip() {
       if (!svgRootB || !detectedColors.value.length) return;
-      const files = detectedColors.value.map(item => ({
-        name: baseName() + '-layer-' + sanitizeForFilename(item.color) + '.svg',
-        content: buildLayerSvg(item.color),
-      }));
+      const files = detectedColors.value
+        .map(item => ({ name: layerFileName(item), content: buildLayerSvg(item.color) }))
+        .filter(f => f.content);
+      if (!files.length) return;
       const zipBlob = createZip(files);
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');

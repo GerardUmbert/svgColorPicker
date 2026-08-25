@@ -177,6 +177,20 @@ main {
 }
 .color-list-item:hover { background: var(--panel-2); }
 .color-list-item.selected { border-color: var(--accent); background: var(--panel-2); }
+.color-list-item .layer-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 .color-list-item .swatch-sm {
   width: 18px;
   height: 18px;

@@ -416,47 +416,38 @@ createApp({
       triggerDownload(markup, baseName() + '-recolored.svg');
     }
 
-    // Builds a version of the current SVG containing only the true visible
-    // silhouette of shapes matching `color`: every shape stacked above it
-    // (regardless of color) is boolean-subtracted from it first, so stacking
-    // all exported layers back together (1 = topmost) exactly reconstructs
-    // the original artwork with no overlap ambiguity.
-    function buildLayerSvg(color) {
-      if (!svgRootB) return null;
-      const els = getPaintableElements(svgRootB);
-      const shapeInfo = els.map((el, i) => {
-        const tag = el.tagName.toLowerCase();
-        if (tag === 'g') return null;
-        const fill = normalizeColor(el.getAttribute('fill') || el.style.fill);
-        const polys = SvgGeometry.shapeToPolygons(el, svgRootB, SvgGeometry.FLATTEN_TOLERANCE);
-        if (!polys.length) return null;
-        return { index: i, fill, polys, bbox: SvgGeometry.unionBBox(polys) };
-      });
+    function layerFileName(item) {
+      return baseName() + '-layer' + item.layer + '-' + sanitizeForFilename(item.color) + '.svg';
+    }
 
-      const ownShapes = shapeInfo.filter(s => s && s.fill === color);
-      if (!ownShapes.length) return null;
+    // martinez polygon = array of rings (ring[0] outer, ring[1..] holes).
+    // A ring's LAST point repeats the first (closed) in our own data, but
+    // martinez's output rings are not guaranteed closed - normalize that,
+    // then emit each ring as its own M...Z subpath. fill-rule="evenodd"
+    // makes overlapping opposite-orientation rings render as holes
+    // regardless of winding direction, so no explicit CW/CCW bookkeeping
+    // is needed here.
+    function ringToPathD(ring) {
+      if (ring.length < 3) return '';
+      const pts = (ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1])
+        ? ring.slice(0, -1) : ring;
+      return 'M' + pts.map(([x, y]) => `${round(x)},${round(y)}`).join('L') + 'Z';
+    }
 
-      // For each of this color's own shapes, only the shapes stacked above
-      // THAT specific shape (by document/z-order) and whose bounding box
-      // actually overlaps it can cut into it. This avoids treating unrelated
-      // shapes elsewhere in the document as cutters just because some other
-      // occurrence of the same color happens to sit lower in the stack.
-      let resultPolys = [];
-      ownShapes.forEach(own => {
-        const cutters = [];
-        for (let j = 0; j < shapeInfo.length; j++) {
-          const other = shapeInfo[j];
-          if (!other || other.index <= own.index) continue;
-          if (!SvgGeometry.bboxOverlap(own.bbox, other.bbox)) continue;
-          other.polys.forEach(p => cutters.push(p));
-        }
-        const cut = cutters.length ? SvgGeometry.subtractAll(own.polys, cutters) : own.polys;
-        resultPolys = resultPolys.concat(cut);
-      });
+    function round(n) {
+      return Math.round(n * 1000) / 1000;
+    }
 
-      if (!resultPolys.length) return null; // fully covered, nothing visible
+    function polygonsToPathD(polygons) {
+      return polygons
+        .flatMap(polygon => polygon.map(ringToPathD))
+        .filter(Boolean)
+        .join(' ');
+    }
 
-      const pathD = SvgGeometry.polygonsToPathD(resultPolys);
+    function svgFromPolygons(polygons, color) {
+      const pathD = polygonsToPathD(polygons);
+      if (!pathD) return null;
       const viewBox = svgRootB.getAttribute('viewBox');
       const ns = 'http://www.w3.org/2000/svg';
       const outSvg = document.createElementNS(ns, 'svg');
@@ -475,47 +466,131 @@ createApp({
       return serializeCleanSvg(outSvg);
     }
 
-    function layerFileName(item) {
-      return baseName() + '-layer' + item.layer + '-' + sanitizeForFilename(item.color) + '.svg';
+    // Extracts, per requested color, this color's own shapes (each as rings)
+    // plus, for each own-shape, only the shapes stacked above THAT specific
+    // shape whose bounding box actually overlaps it. Cheap DOM/attribute
+    // work done on the main thread; the actual boolean subtraction (via the
+    // bundled martinez clipping library) runs in a Web Worker so the tab
+    // never freezes, however long the geometry takes.
+    function buildSubtractionRequests(colors) {
+      if (!svgRootB) return [];
+      const els = getPaintableElements(svgRootB);
+      const shapeInfo = els.map((el, i) => {
+        if (el.tagName.toLowerCase() === 'g') return null;
+        const fill = normalizeColor(el.getAttribute('fill') || el.style.fill);
+        const rings = SvgGeometry.shapeToRings(el, svgRootB, SvgGeometry.FLATTEN_TOLERANCE);
+        if (!rings.length) return null;
+        return { index: i, fill, rings, bbox: SvgGeometry.ringsBBox(rings) };
+      });
+
+      return colors.map(item => {
+        const ownShapes = shapeInfo.filter(s => s && s.fill === item.color);
+        const cutterShapes = ownShapes.map(own => {
+          const cutters = [];
+          for (let j = 0; j < shapeInfo.length; j++) {
+            const other = shapeInfo[j];
+            if (!other || other.index <= own.index) continue;
+            if (!SvgGeometry.bboxOverlap(own.bbox, other.bbox)) continue;
+            cutters.push(other.rings);
+          }
+          return cutters;
+        });
+        return {
+          color: item.color,
+          layer: item.layer,
+          ownShapes: ownShapes.map(s => s.rings),
+          cutterShapes,
+        };
+      }).filter(r => r.ownShapes.length);
     }
 
     const isExporting = ref(false);
     const exportLabel = ref('');
+    const exportProgress = ref({ done: 0, total: 0 });
 
-    // Runs `work` after the UI has had a chance to paint the loading state,
-    // since the geometry computation below is synchronous and can briefly
-    // block the main thread on complex artwork.
-    function runWithExportFeedback(label, work) {
-      isExporting.value = true;
-      exportLabel.value = label;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          try {
-            work();
-          } finally {
-            isExporting.value = false;
+    let layerWorker = null;
+    let workerJobCounter = 0;
+    let activeJob = null;
+
+    function getLayerWorker() {
+      if (!layerWorker) {
+        layerWorker = new Worker('layer-worker.js');
+        layerWorker.onmessage = (e) => {
+          const msg = e.data;
+          if (!activeJob || msg.jobId !== activeJob.id) return;
+          if (msg.type === 'progress') {
+            exportProgress.value = { done: msg.done, total: msg.total };
+            exportLabel.value = `Building layer ${msg.done} of ${msg.total}...`;
+          } else if (msg.type === 'done') {
+            const resolve = activeJob.resolve;
+            activeJob = null;
+            resolve(msg.results);
           }
-        });
+        };
+        layerWorker.onerror = (err) => {
+          console.error('Layer worker error:', err.message);
+          if (activeJob) {
+            const resolve = activeJob.resolve;
+            activeJob = null;
+            resolve(null);
+          }
+        };
+      }
+      return layerWorker;
+    }
+
+    // Runs the boolean subtraction for `requests` in the worker, resolving
+    // with [{color, layer, polygons}] (never blocks the main thread).
+    function runSubtractionJob(requests) {
+      return new Promise((resolve) => {
+        const worker = getLayerWorker();
+        const id = ++workerJobCounter;
+        activeJob = { id, resolve };
+        exportProgress.value = { done: 0, total: requests.length };
+        worker.postMessage({ type: 'build', jobId: id, requests });
       });
     }
 
-    function downloadLayer(item) {
-      runWithExportFeedback('Building layer...', () => {
-        const markup = buildLayerSvg(item.color);
-        if (!markup) {
-          alert('This color is fully covered by shapes above it, so it has no visible area to export.');
-          return;
-        }
+    function cancelExport() {
+      if (layerWorker) {
+        layerWorker.terminate();
+        layerWorker = null;
+      }
+      activeJob = null;
+      isExporting.value = false;
+    }
+
+    async function downloadLayer(item) {
+      isExporting.value = true;
+      exportLabel.value = 'Building layer...';
+      try {
+        const requests = buildSubtractionRequests([item]);
+        const results = requests.length ? await runSubtractionJob(requests) : [];
+        if (!isExporting.value) return; // cancelled
+        const result = results && results[0];
+        const markup = result ? svgFromPolygons(result.polygons, item.color) : null;
+        if (!markup) return;
         triggerDownload(markup, layerFileName(item));
-      });
+      } finally {
+        isExporting.value = false;
+      }
     }
 
-    function downloadAllLayersZip() {
+    async function downloadAllLayersZip() {
       if (!svgRootB || !detectedColors.value.length) return;
-      runWithExportFeedback('Building layers and zipping...', () => {
-        const files = detectedColors.value
-          .map(item => ({ name: layerFileName(item), content: buildLayerSvg(item.color) }))
-          .filter(f => f.content);
+      isExporting.value = true;
+      exportLabel.value = 'Building layers...';
+      try {
+        const requests = buildSubtractionRequests(detectedColors.value);
+        const results = requests.length ? await runSubtractionJob(requests) : [];
+        if (!isExporting.value) return; // cancelled
+        if (!results) return; // worker error
+        exportLabel.value = 'Zipping...';
+        const itemByColor = new Map(detectedColors.value.map(item => [item.color, item]));
+        const files = results
+          .map(r => ({ item: itemByColor.get(r.color), markup: svgFromPolygons(r.polygons, r.color) }))
+          .filter(f => f.markup)
+          .map(f => ({ name: layerFileName(f.item), content: f.markup }));
         if (!files.length) return;
         const zipBlob = createZip(files);
         const url = URL.createObjectURL(zipBlob);
@@ -526,7 +601,9 @@ createApp({
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-      });
+      } finally {
+        isExporting.value = false;
+      }
     }
 
     return {
@@ -541,7 +618,7 @@ createApp({
       onCurrentColorTextInput,
       toggleDetectedColor, clearDetectedSelection, recolorSelected,
       undo, redo, resetToOriginal, downloadSvg,
-      downloadLayer, downloadAllLayersZip, isExporting, exportLabel,
+      downloadLayer, downloadAllLayersZip, isExporting, exportLabel, exportProgress, cancelExport,
       colorToHex,
     };
   }

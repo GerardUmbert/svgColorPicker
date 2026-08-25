@@ -63,12 +63,12 @@
             <span class="swatch-sm" :style="{background: item.color}"></span>
             <span>{{ item.color }}</span>
             <span class="count">{{ item.count }}</span>
-            <button class="layer-download" title="Download this layer's true visible shape (cut out where covered by layers above it)"
+            <button class="layer-download" title="Download only this color's shapes as its own SVG"
                     :disabled="isExporting"
                     @click.stop="downloadLayer(item)">&darr;</button>
           </div>
         </div>
-        <p class="hint">Layer 1 = topmost. Ctrl/Cmd/Shift+click to select multiple colors, then replace them all at once. The &darr; button exports that layer's true visible silhouette &mdash; parts covered by layers above are cut out, so stacking exports 1, 2, 3&hellip; back together reconstructs the original with no overlap.</p>
+        <p class="hint">Layer 1 = topmost. Ctrl/Cmd/Shift+click to select multiple colors, then replace them all at once. The &darr; button exports just that color's shapes (everything else hidden) &mdash; note this doesn't cut away parts covered by shapes drawn on top, so overlapping areas keep their full original silhouette.</p>
         <div style="display:flex; gap:8px; margin-top:10px;">
           <button class="btn" style="flex:1;"
                   :disabled="!selectedDetectedColors.length"
@@ -117,7 +117,13 @@
   <div class="export-overlay" v-if="isExporting">
     <div class="export-box">
       <div class="spinner"></div>
-      <span>{{ exportLabel }}</span>
+      <div class="export-info">
+        <span>{{ exportLabel }}</span>
+        <div class="export-progress-track" v-if="exportProgress.total">
+          <div class="export-progress-fill" :style="{width: (exportProgress.done / exportProgress.total * 100) + '%'}"></div>
+        </div>
+      </div>
+      <button class="btn" @click="cancelExport">Cancel</button>
     </div>
   </div>
 </div>

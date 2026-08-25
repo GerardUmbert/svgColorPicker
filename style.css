@@ -376,10 +376,11 @@ kbd {
   padding: 20px 28px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   font-size: 14px;
   color: var(--text);
   box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+  min-width: 320px;
 }
 .spinner {
   width: 20px;
@@ -392,4 +393,22 @@ kbd {
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+.export-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.export-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.export-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease-out;
 }

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SVG Color Picker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>SVG Color Picker</h1>
+    <label class="file-input-label btn primary">
+      Upload SVG
+      <input type="file" accept=".svg,image/svg+xml" @change="onFileInputChange">
+    </label>
+    <button class="btn" :disabled="!canUndo" @click="undo">Undo</button>
+    <button class="btn" :disabled="!canRedo" @click="redo">Redo</button>
+    <button class="btn danger" :disabled="!hasSvg" @click="resetToOriginal">Reset</button>
+    <button class="btn primary" :disabled="!hasSvg" @click="downloadSvg">Download SVG</button>
+  </header>
+
+  <main>
+    <aside class="sidebar" v-if="hasSvg">
+      <div class="section">
+        <h2>Current Fill Color</h2>
+        <div class="current-color-box">
+          <input type="color" class="sample-input" :value="colorToHex(currentColor)"
+                 @input="currentColor = $event.target.value" style="width:32px;height:32px;padding:0;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer;">
+          <input type="text" :value="currentColor" @change="onCurrentColorTextInput">
+        </div>
+        <p class="hint">Click any shape on the right to fill it with this color. Hold <kbd>Shift</kbd>+click to set stroke instead.</p>
+      </div>
+
+      <div class="section">
+        <h2>Palette</h2>
+        <div class="palette-grid">
+          <div v-for="(color, i) in palette" :key="i"
+               class="swatch"
+               :class="{active: selectedPaletteIndex === i}"
+               :style="{background: color}"
+               @click="selectPaletteColor(i)"
+               :title="color">
+            <span class="num">{{ (i+1) % 10 }}</span>
+            <button class="remove" @click.stop="removeColorFromPalette(i)">&times;</button>
+          </div>
+        </div>
+        <div class="add-color-row">
+          <input type="color" v-model="newColorHex">
+          <button class="btn" @click="addColorToPalette" style="flex:1;">Add to palette</button>
+        </div>
+        <p class="hint">Press <kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd> to jump to a palette slot.</p>
+      </div>
+
+      <div class="section" v-if="detectedColors.length">
+        <h2>Colors in SVG</h2>
+        <div class="color-list">
+          <div v-for="item in detectedColors" :key="item.color"
+               class="color-list-item"
+               :class="{selected: selectedDetectedColors.includes(item.color)}"
+               @click="toggleDetectedColor(item.color, $event)">
+            <span class="swatch-sm" :style="{background: item.color}"></span>
+            <span>{{ item.color }}</span>
+            <span class="count">{{ item.count }}</span>
+          </div>
+        </div>
+        <p class="hint">Ctrl/Cmd/Shift+click to select multiple colors, then replace them all at once.</p>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="btn" style="flex:1;"
+                  :disabled="!selectedDetectedColors.length"
+                  @click="recolorSelected(currentColor)">
+            Replace {{ selectedDetectedColors.length > 1 ? selectedDetectedColors.length + ' colors' : 'with current' }}
+          </button>
+          <button class="btn" v-if="selectedDetectedColors.length" @click="clearDetectedSelection">Clear</button>
+        </div>
+      </div>
+    </aside>
+
+    <section class="canvas-area">
+      <div class="compare-bar" v-if="hasSvg">
+        <label>
+          <input type="checkbox" v-model="compareMode"> Side-by-side comparison
+        </label>
+        <span style="margin-left:auto;">{{ fileName }}</span>
+      </div>
+
+      <div v-if="hasSvg" class="svg-views" :class="compareMode ? 'compare' : 'single'">
+        <div class="svg-pane" v-if="compareMode" @wheel="onWheelZoom($event, 'a')" @dblclick="resetZoom('a')">
+          <span class="label">Original &middot; {{ Math.round(zoomA * 100) }}%</span>
+          <div class="svg-host" ref="svgHostA" :style="{transform: 'scale(' + zoomA + ')'}"></div>
+        </div>
+        <div class="svg-pane" @wheel="onWheelZoom($event, 'b')" @dblclick="resetZoom('b')">
+          <span class="label">{{ compareMode ? 'Editing' : fileName }} &middot; {{ Math.round(zoomB * 100) }}%</span>
+          <div class="svg-host" ref="svgHostB" :style="{transform: 'scale(' + zoomB + ')'}"></div>
+        </div>
+      </div>
+
+      <div v-else class="empty-state" @drop="onDrop" @dragover="onDragOver" @dragleave="onDragLeave">
+        <div class="dropzone" :class="{dragover: isDragOver}">
+          <p>Drag &amp; drop an SVG here, or use the Upload button above.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

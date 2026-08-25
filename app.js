@@ -444,17 +444,69 @@ createApp({
       return baseName() + '-layer' + item.layer + '-' + label + '.svg';
     }
 
+    // Curve flattening (geometry.js) and the boolean-subtraction clipping
+    // (martinez, in the worker) both produce far more points per path than
+    // the shapes visually need - flattening samples curves finely, and
+    // clipping adds an intersection vertex everywhere two edges cross, even
+    // when the result is still nearly a straight line there. Slicers that
+    // import these as modifiers re-triangulate every vertex, so an
+    // unsimplified export can make an otherwise-small file painfully slow
+    // to load. Douglas-Peucker removes points that don't meaningfully change
+    // the outline shape before we serialize to a path.
+    const SIMPLIFY_TOLERANCE = 0.35; // px; matches roughly half FLATTEN_TOLERANCE
+
+    function perpendicularDistance(pt, a, b) {
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy);
+      if (len === 0) return Math.hypot(pt[0] - a[0], pt[1] - a[1]);
+      return Math.abs((pt[0] - a[0]) * dy - (pt[1] - a[1]) * dx) / len;
+    }
+
+    function douglasPeucker(points, tolerance) {
+      if (points.length < 3) return points;
+      let maxDist = 0, maxIndex = 0;
+      const first = points[0], last = points[points.length - 1];
+      for (let i = 1; i < points.length - 1; i++) {
+        const d = perpendicularDistance(points[i], first, last);
+        if (d > maxDist) { maxDist = d; maxIndex = i; }
+      }
+      if (maxDist <= tolerance) return [first, last];
+      const left = douglasPeucker(points.slice(0, maxIndex + 1), tolerance);
+      const right = douglasPeucker(points.slice(maxIndex), tolerance);
+      return left.slice(0, -1).concat(right);
+    }
+
+    // Runs Douglas-Peucker around the ring as a loop (rather than treating
+    // it as an open line from first to last point), since a closed ring has
+    // no natural start/end - splitting it at a few evenly spaced anchor
+    // points keeps the simplification from distorting the shape near the
+    // arbitrary index-0 seam.
+    function simplifyRing(ring, tolerance) {
+      const pts = (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1])
+        ? ring.slice(0, -1) : ring;
+      if (pts.length < 5) return pts;
+      const anchors = 4;
+      const step = Math.floor(pts.length / anchors) || 1;
+      let result = [];
+      for (let a = 0; a < anchors; a++) {
+        const startI = a * step;
+        const endI = a === anchors - 1 ? pts.length - 1 : (a + 1) * step;
+        const segment = pts.slice(startI, endI + 1).concat(a === anchors - 1 ? [pts[0]] : []);
+        if (segment.length < 2) continue;
+        const simplified = douglasPeucker(segment, tolerance);
+        result = result.concat(a === 0 ? simplified : simplified.slice(1));
+      }
+      return result.length >= 3 ? result : pts;
+    }
+
     // martinez polygon = array of rings (ring[0] outer, ring[1..] holes).
-    // A ring's LAST point repeats the first (closed) in our own data, but
-    // martinez's output rings are not guaranteed closed - normalize that,
-    // then emit each ring as its own M...Z subpath. fill-rule="evenodd"
-    // makes overlapping opposite-orientation rings render as holes
-    // regardless of winding direction, so no explicit CW/CCW bookkeeping
-    // is needed here.
+    // fill-rule="evenodd" makes overlapping opposite-orientation rings
+    // render as holes regardless of winding direction, so no explicit
+    // CW/CCW bookkeeping is needed here.
     function ringToPathD(ring) {
       if (ring.length < 3) return '';
-      const pts = (ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1])
-        ? ring.slice(0, -1) : ring;
+      const pts = simplifyRing(ring, SIMPLIFY_TOLERANCE);
+      if (pts.length < 3) return '';
       return 'M' + pts.map(([x, y]) => `${round(x)},${round(y)}`).join('L') + 'Z';
     }
 

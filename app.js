@@ -190,13 +190,35 @@ createApp({
 
     let svgRootB = null; // the live <svg> element user paints on
 
+    // Sets explicit width/height attributes far larger than the SVG's
+    // displayed CSS size (which stays 100%/auto), so the browser rasterizes
+    // the vector content at high resolution up front instead of at its
+    // on-screen size. CSS then scales that high-res raster back down to
+    // display size (a downscale, which stays sharp), and the pan/zoom
+    // transform multiplies on top of that. Without this, zooming in with a
+    // CSS transform just stretches a low-resolution bitmap and blurs.
+    const RENDER_SCALE = 8; // should cover up to ZOOM_MAX without blurring
+
     function renderInto(hostEl, markup, interactive) {
       if (!hostEl) return;
       hostEl.innerHTML = markup;
       const svgEl = hostEl.querySelector('svg');
       if (!svgEl) return;
-      svgEl.removeAttribute('width');
-      svgEl.removeAttribute('height');
+      const viewBox = svgEl.getAttribute('viewBox');
+      let baseW = parseFloat(svgEl.getAttribute('width'));
+      let baseH = parseFloat(svgEl.getAttribute('height'));
+      if ((!baseW || !baseH) && viewBox) {
+        const parts = viewBox.trim().split(/[\s,]+/).map(Number);
+        baseW = parts[2];
+        baseH = parts[3];
+      }
+      if (baseW && baseH) {
+        svgEl.setAttribute('width', baseW * RENDER_SCALE);
+        svgEl.setAttribute('height', baseH * RENDER_SCALE);
+      } else {
+        svgEl.removeAttribute('width');
+        svgEl.removeAttribute('height');
+      }
       svgEl.style.width = '100%';
       svgEl.style.height = 'auto';
 
@@ -591,6 +613,7 @@ createApp({
           .map(r => ({ item: itemByColor.get(r.color), markup: svgFromPolygons(r.polygons, r.color) }))
           .filter(f => f.markup)
           .map(f => ({ name: layerFileName(f.item), content: f.markup }));
+        files.push({ name: baseName() + '-complete.svg', content: serializeCleanSvg(svgRootB) });
         if (!files.length) return;
         const zipBlob = createZip(files);
         const url = URL.createObjectURL(zipBlob);

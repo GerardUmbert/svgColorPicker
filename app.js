@@ -43,6 +43,7 @@ createApp({
     const hasSvg = computed(() => !!svgMarkupOriginal.value);
 
     const compareMode = ref(true);
+    const transparentBackground = ref(true);
     const isDragOver = ref(false);
 
     const palette = reactive(loadPalette());
@@ -439,7 +440,8 @@ createApp({
     }
 
     function layerFileName(item) {
-      return baseName() + '-layer' + item.layer + '-' + sanitizeForFilename(item.color) + '.svg';
+      const label = item.color === BACKGROUND_COLOR ? 'background-ffffff' : sanitizeForFilename(item.color);
+      return baseName() + '-layer' + item.layer + '-' + label + '.svg';
     }
 
     // martinez polygon = array of rings (ring[0] outer, ring[1..] holes).
@@ -467,18 +469,34 @@ createApp({
         .join(' ');
     }
 
-    function svgFromPolygons(polygons, color) {
+    function getCanvasViewBox() {
+      const viewBox = svgRootB.getAttribute('viewBox');
+      if (viewBox) {
+        const parts = viewBox.trim().split(/[\s,]+/).map(Number);
+        return { attr: viewBox, x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+      }
+      const w = parseFloat(svgRootB.getAttribute('width'));
+      const h = parseFloat(svgRootB.getAttribute('height'));
+      if (w && h) return { attr: `0 0 ${w} ${h}`, x: 0, y: 0, w, h };
+      return null;
+    }
+
+    function svgFromPolygons(polygons, color, includeWhiteBg) {
       const pathD = polygonsToPathD(polygons);
       if (!pathD) return null;
-      const viewBox = svgRootB.getAttribute('viewBox');
+      const canvas = getCanvasViewBox();
       const ns = 'http://www.w3.org/2000/svg';
       const outSvg = document.createElementNS(ns, 'svg');
       outSvg.setAttribute('xmlns', ns);
-      if (viewBox) outSvg.setAttribute('viewBox', viewBox);
-      else {
-        const w = svgRootB.getAttribute('width');
-        const h = svgRootB.getAttribute('height');
-        if (w && h) outSvg.setAttribute('viewBox', `0 0 ${parseFloat(w)} ${parseFloat(h)}`);
+      if (canvas) outSvg.setAttribute('viewBox', canvas.attr);
+      if (includeWhiteBg && canvas) {
+        const bgRect = document.createElementNS(ns, 'rect');
+        bgRect.setAttribute('x', canvas.x);
+        bgRect.setAttribute('y', canvas.y);
+        bgRect.setAttribute('width', canvas.w);
+        bgRect.setAttribute('height', canvas.h);
+        bgRect.setAttribute('fill', '#ffffff');
+        outSvg.appendChild(bgRect);
       }
       const pathEl = document.createElementNS(ns, 'path');
       pathEl.setAttribute('d', pathD);
@@ -494,6 +512,25 @@ createApp({
     // work done on the main thread; the actual boolean subtraction (via the
     // bundled martinez clipping library) runs in a Web Worker so the tab
     // never freezes, however long the geometry takes.
+    // Synthetic bottommost shape spanning the whole canvas, used as a real
+    // "background color" layer when the transparent-background toggle is
+    // off: it gets cut by every actual shape in the artwork just like any
+    // other layer, so its exported silhouette is exactly the gaps nothing
+    // else covers - a proper solid-color backing layer for stacking/print,
+    // not just a decorative rect.
+    function backgroundShapeInfo() {
+      const canvas = getCanvasViewBox();
+      if (!canvas) return null;
+      const ring = [
+        [canvas.x, canvas.y], [canvas.x + canvas.w, canvas.y],
+        [canvas.x + canvas.w, canvas.y + canvas.h], [canvas.x, canvas.y + canvas.h],
+        [canvas.x, canvas.y],
+      ];
+      return { index: -1, fill: BACKGROUND_COLOR, rings: [ring], bbox: canvas.w ? { minX: canvas.x, minY: canvas.y, maxX: canvas.x + canvas.w, maxY: canvas.y + canvas.h } : null };
+    }
+
+    const BACKGROUND_COLOR = '__background__';
+
     function buildSubtractionRequests(colors) {
       if (!svgRootB) return [];
       const els = getPaintableElements(svgRootB);
@@ -504,6 +541,11 @@ createApp({
         if (!rings.length) return null;
         return { index: i, fill, rings, bbox: SvgGeometry.ringsBBox(rings) };
       });
+
+      if (!transparentBackground.value) {
+        const bg = backgroundShapeInfo();
+        if (bg) shapeInfo.push(bg);
+      }
 
       return colors.map(item => {
         const ownShapes = shapeInfo.filter(s => s && s.fill === item.color);
@@ -603,14 +645,21 @@ createApp({
       isExporting.value = true;
       exportLabel.value = 'Building layers...';
       try {
-        const requests = buildSubtractionRequests(detectedColors.value);
+        const requestedItems = detectedColors.value.slice();
+        if (!transparentBackground.value) {
+          requestedItems.push({ color: BACKGROUND_COLOR, layer: detectedColors.value.length + 1 });
+        }
+        const requests = buildSubtractionRequests(requestedItems);
         const results = requests.length ? await runSubtractionJob(requests) : [];
         if (!isExporting.value) return; // cancelled
         if (!results) return; // worker error
         exportLabel.value = 'Zipping...';
-        const itemByColor = new Map(detectedColors.value.map(item => [item.color, item]));
+        const itemByColor = new Map(requestedItems.map(item => [item.color, item]));
         const files = results
-          .map(r => ({ item: itemByColor.get(r.color), markup: svgFromPolygons(r.polygons, r.color) }))
+          .map(r => ({
+            item: itemByColor.get(r.color),
+            markup: svgFromPolygons(r.polygons, r.color === BACKGROUND_COLOR ? '#ffffff' : r.color),
+          }))
           .filter(f => f.markup)
           .map(f => ({ name: layerFileName(f.item), content: f.markup }));
         files.push({ name: baseName() + '-complete.svg', content: serializeCleanSvg(svgRootB) });
@@ -630,7 +679,7 @@ createApp({
     }
 
     return {
-      hasSvg, fileName, compareMode, isDragOver,
+      hasSvg, fileName, compareMode, transparentBackground, isDragOver,
       svgHostA, svgHostB,
       palette, selectedPaletteIndex, currentColor, newColorHex,
       detectedColors, selectedDetectedColors,

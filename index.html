@@ -88,17 +88,22 @@
         <label>
           <input type="checkbox" v-model="compareMode"> Side-by-side comparison
         </label>
+        <label>
+          <input type="checkbox" v-model="transparentBackground"> Transparent background
+        </label>
         <span style="margin-left:auto;">{{ fileName }}</span>
       </div>
 
       <div v-if="hasSvg" class="svg-views" :class="compareMode ? 'compare' : 'single'">
         <div class="svg-pane" v-if="compareMode"
+             :class="{'bg-white': !transparentBackground}"
              @wheel="onWheelZoom($event, 'a')" @dblclick="resetZoom('a')"
              @mousedown="onPaneMouseDown($event, 'a')">
           <span class="label">Original &middot; {{ Math.round(view.a.zoom * 100) }}%</span>
           <div class="svg-host" ref="svgHostA" :style="{transform: paneTransform('a')}"></div>
         </div>
         <div class="svg-pane"
+             :class="{'bg-white': !transparentBackground}"
              @wheel="onWheelZoom($event, 'b')" @dblclick="resetZoom('b')"
              @mousedown="onPaneMouseDown($event, 'b')">
           <span class="label">{{ compareMode ? 'Editing' : fileName }} &middot; {{ Math.round(view.b.zoom * 100) }}%</span>

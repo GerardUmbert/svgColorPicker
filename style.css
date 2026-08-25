@@ -292,6 +292,9 @@ main.no-sidebar {
 .svg-pane:active {
   cursor: grabbing;
 }
+.svg-pane.bg-white {
+  background: #ffffff;
+}
 .svg-pane .label {
   position: absolute;
   top: 8px;

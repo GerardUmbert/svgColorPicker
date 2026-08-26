@@ -347,11 +347,17 @@ createApp({
         if (!host) return;
         const svgEl = host.querySelector('svg');
         if (!svgEl) return;
-        svgEl.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
+        svgEl.querySelectorAll('.hover-highlight').forEach(el => {
+          el.classList.remove('hover-highlight');
+          el.style.removeProperty('--hover-highlight-original');
+        });
         if (!color) return;
         getPaintableElements(svgEl).forEach(el => {
           const fill = normalizeColor(el.getAttribute('fill') || getComputedStyle(el).fill);
-          if (fill === color) el.classList.add('hover-highlight');
+          if (fill === color) {
+            el.style.setProperty('--hover-highlight-original', color);
+            el.classList.add('hover-highlight');
+          }
         });
       });
     }

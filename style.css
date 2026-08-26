@@ -326,13 +326,11 @@ main.no-sidebar {
   outline: 2px solid var(--accent-2);
 }
 .svg-host [data-paintable].hover-highlight {
-  outline: 3px solid #39ff6a;
-  outline-offset: 1px;
   animation: hover-blink 0.6s ease-in-out infinite;
 }
 @keyframes hover-blink {
-  0%, 100% { outline-color: #39ff6a; }
-  50% { outline-color: rgba(57, 255, 106, 0.15); }
+  0%, 100% { fill: #39ff6a; }
+  50% { fill: var(--hover-highlight-original, #39ff6a); }
 }
 
 .empty-state {

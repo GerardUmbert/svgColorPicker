@@ -318,9 +318,6 @@ createApp({
       } else {
         selectedDetectedColors.value = [color];
       }
-      if (selectedDetectedColors.value.length === 1) {
-        currentColor.value = selectedDetectedColors.value[0];
-      }
       highlightMatching(selectedDetectedColors.value);
     }
 
